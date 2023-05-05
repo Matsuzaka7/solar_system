@@ -108,74 +108,62 @@ const onMouseClick = (event: any, flag: boolean) => {
     const targetObj = intersects[i].object;
     // 操作交点处的物体
     scene.children.forEach((child) => {
-      
       // 排他
       child.type === "Line" && child.material.color.set(0x999999);
       if (child.name === targetObj.name) {
         targetObj.type === "Line" && targetObj.material.color.set(0x3fb883);
-        // 如果flag是true代表双击, 平滑的将相机划到目标行星位置
-        if (flag) {
-          // 节流只执行一次
-          if (Date.now() - once > 1000) {
-            if (child.type === "Mesh") {
-              once = Date.now();
-              // 设置目标物体
-              controls.target = child.position;
-              // 更新相机方向
-              camera.lookAt(child.position);
-              gsap.to(camera.position, {
-                duration: 2,
-                x: child.position.x + 5,
-                y: child.position.y + 5,
-                z: child.position.z + 5,
-                ease: "Power2.easeInOut",
-                onStart: function() {
-                },
-                onComplete: function() {
-                  console.log('结束');
-                  newTarget = child
+        if (flag && Date.now() - once > 1000) {
+          // 点击的是球体或地月系统
+          if (child.type === "Mesh" || (child.name === "earthMoonSystem" && child.type === "Object3D")) {
+            once = Date.now();
+            // 获取最深处的球体位置
+            const targetObject = (function deep(child){
+              if (child.children.length > 0) {
+                if (child.position.x + child.position.y + child.position.z || child.name === 'sun') {
+                  return child
+                } else {
+                  if (child.children[0].position.x + child.children[0].position.y + child.children[0].position.z) {
+                    return child.children[0]
+                  } else {
+                    child.children.forEach((item, index) => deep(child.children[index]))
+                  }
                 }
-              })
-              // const targetVector = new THREE.Vector3().copy(child.position); // 将目标物体的坐标转换为向量
-              // console.log(targetVector);
-              
-              // 使用GSAP 3进行相机旋转动画
-              // gsap.to(camera.rotation, {
-              //   duration: 2,
-              //   x: -(targetVector.sub(camera.position)).normalize().y * -1, // 计算旋转角度
-              //   y: -(targetVector.sub(camera.position)).normalize().x, // 计算旋转角度
-              //   z: -(targetVector.sub(camera.position)).normalize().z,
-              //   onComplete: () => {
-              //     controls.target = newTarget.position;
-              //     // 更新相机方向
-              //     camera.lookAt(newTarget.position);
-              //   }
-              // });
-            } else if (child.name === "earthMoonSystem" && child.type === "Object3D") {
-              // 处理地月系统
-              once = Date.now();
-              const objectPosition = child.children[0].position
-              // 设置目标物体
-              controls.target = objectPosition;
-              // 更新相机方向
-              camera.lookAt(objectPosition);
-              gsap.to(camera.position, {
-                duration: 2,
-                x: objectPosition.x + 5,
-                y: objectPosition.y + 5,
-                z: objectPosition.z + 5,
-                ease: "Power2.easeInOut",
-                onStart: function() {
-                },
-                onComplete: function() {
-                  newTarget = child.children[0]
-                }
-              })
-            }
+              } else {
+                return child
+              }
+            })(child)
+            const objectPosition = targetObject.position
+            const targetRadius = targetObject.geometry.parameters.radius
+            controls.target = objectPosition;
+            controls.minDistance = targetRadius * 2
+            // 相机角度旋转
+            var startQuaternion = new THREE.Quaternion().copy(camera.quaternion);  // 记录起始四元数
+            var endQuaternion = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(camera.position, objectPosition, camera.up));  // 计算终止四元数
+            gsap.to({}, {  // 创建空对象，用于执行 tween 动画
+              duration: 0.5,  // 动画完成时间 1 秒
+              ease: "Power2.easeInOut",
+              onUpdate: function() {
+                camera.quaternion.copy(startQuaternion).slerp(endQuaternion, this.progress());
+              },
+              onComplete: function() {}
+            })
+
+            gsap.to(camera.position, {
+              duration: 2,
+              x: objectPosition.x + targetRadius * 2,
+              y: objectPosition.y + targetRadius * 2,
+              z: objectPosition.z + targetRadius * 2,
+              ease: "Power2.easeInOut",
+              onComplete: function() {
+                newTarget = child
+                controls.target = objectPosition;
+                camera.lookAt(objectPosition);
+              }
+            })
           }
         }
       }
-    });
+    })
   }
 };
 window.addEventListener("mousemove", (event) => onMouseClick(event, false), false);
@@ -189,20 +177,31 @@ window.addEventListener("keyup", (e) => {
     // ESC
     case 27:
       if (!newTarget) return;
-      gsap.to(camera.position, {
-        duration: 1.5,
-        x: 20,
-        y: 10,
-        z: 20,
-        onUpdate: () => {
-          // 动画过程相机一直锁定目标元素
-          camera.lookAt(new THREE.Vector3(0, 0, 0));
+      var startQuaternion = new THREE.Quaternion().copy(camera.quaternion);  // 记录起始四元数
+      var endQuaternion = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().lookAt(camera.position, new THREE.Vector3(0, 0, 0), camera.up));  // 计算终止四元数
+           
+      gsap.to({}, {
+        duration: 0.5,
+        ease: "Power2.easeInOut",
+        onUpdate: function() {
+          camera.quaternion.copy(startQuaternion).slerp(endQuaternion, this.progress());
         },
-        onComplete: () => {
-          newTarget = null;
+        onComplete: function() {
           controls.target = new THREE.Vector3(0, 0, 0);
-        },
-      });
+          camera.lookAt(new THREE.Vector3(0, 0, 0));
+        }
+      })
+
+      gsap.to(camera.position, {
+        duration: 2,
+        x: camera.position.x > 20 ? 20 : -20,
+        y: 10,
+        z: camera.position.z > 20 ? 20 : -20,
+        ease: "Power2.easeInOut",
+        onComplete: function() {
+          newTarget = null;
+        }
+      })
       break;
     // 空格暂停旋转
     case 32:
